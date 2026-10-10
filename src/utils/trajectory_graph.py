@@ -73,7 +73,10 @@ def _pseudotime_chain_graph(
         .sort_values()
     )
     states = [str(s) for s in med.index]
-    terminals = set(map(str, terminal_states or []))
+    # `terminal_states` may be a numpy array here (anndata round-trips list
+    # uns values through h5ad as ndarrays) — `x or []` on a multi-element
+    # array raises ValueError, so guard on `is not None` instead.
+    terminals = set(map(str, terminal_states if terminal_states is not None else []))
     non_term = [s for s in states if s not in terminals]
     if root in non_term:
         non_term = [root] + [s for s in non_term if s != root]
