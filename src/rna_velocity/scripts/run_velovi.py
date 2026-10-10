@@ -11,6 +11,9 @@ import numpy as np
 import torch
 
 from rna_velocity.cli import load_adata, parse_io_args, save_adata
+from rna_velocity.compat import ensure_anndata_io
+
+ensure_anndata_io()  # scvi-tools (via velovi) imports `anndata.io` — see rna_velocity/compat.py
 
 
 def add_velovi_outputs_to_adata(adata, vae):
@@ -32,11 +35,19 @@ def add_velovi_outputs_to_adata(adata, vae):
 
 def main():
     args = parse_io_args("velovi")
+    import scanpy as sc
     import scvelo as scv
     from velovi import VELOVI, preprocess_data
 
     adata = load_adata(args.input)
-    scv.pp.filter_and_normalize(adata, min_shared_counts=20, n_top_genes=3000)
+    # scvelo 0.3.x filter_and_normalize() no longer does HVG selection via
+    # n_top_genes (silently forwarded to normalize_per_cell(), which raises
+    # TypeError) — select HVGs explicitly instead.
+    scv.pp.filter_genes(adata, min_shared_counts=20)
+    sc.pp.normalize_total(adata)
+    sc.pp.log1p(adata)
+    sc.pp.highly_variable_genes(adata, n_top_genes=3000)
+    adata = adata[:, adata.var.highly_variable].copy()
     scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
     adata = preprocess_data(adata)
     VELOVI.setup_anndata(adata, spliced_layer="Ms", unspliced_layer="Mu")
