@@ -1,5 +1,13 @@
-"""Shared low-level helpers used by notebooks (trajectory graph topology, plotting).
+"""Shared utilities for the scRNA-seq pipeline."""
 
-`trajectory_graph.py` (`derive_trajectory_graph`) and `plot_streamlike.py`
-(`plot_streamlike`) hold real implementations — see their docstrings.
-"""
+from src.utils.plot_streamlike import (
+    build_state_tree,
+    compute_streamlike_layout,
+    plot_streamlike,
+)
+
+__all__ = [
+    "build_state_tree",
+    "compute_streamlike_layout",
+    "plot_streamlike",
+]
