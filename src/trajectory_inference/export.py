@@ -70,6 +70,133 @@ def select_observations(
     return out
 
 
+def _contract_to_present(tree: nx.DiGraph, root: str, present: set[str]) -> nx.DiGraph:
+    """Drop states absent from the observations, linking each kept state to its
+    nearest kept ancestor (so an empty intermediate state doesn't split the tree)."""
+    if root not in present:
+        raise ValueError(f"root {root!r} has no observations — cannot anchor BoNesis constraints")
+    out = nx.DiGraph()
+    out.add_node(root)
+    for v in nx.topological_sort(tree):
+        if v == root or v not in present:
+            continue
+        anc = next(iter(tree.predecessors(v)), None)
+        while anc is not None and anc not in present:
+            anc = next(iter(tree.predecessors(anc)), None)
+        if anc is not None:
+            out.add_edge(anc, v)
+    return out
+
+
+def bonesis_spec_from_tree(
+    tree: nx.DiGraph, root: str, *, side_leaves: Sequence[str] = ()
+) -> dict:
+    """BoNesis specification from a rooted state tree (Chevalier et al. 2025, Fig. 2C).
+
+    - terminals = leaves of `tree` minus `side_leaves`; each is a fixed point;
+    - reachability along every tree edge, written as chains (one per branch);
+    - commitment: from a non-terminal state, terminals outside its subtree are
+      unreachable (`/`);
+    - universal: from the root and from the first state of each new branch, every
+      reachable fixed point matches one of the terminals of its subtree (`>> "fixpoints"`);
+    - distinct: the fixed points of any two terminals are different configurations
+      (`!=`), as in the authors' case study 1 code.
+
+    `side_leaves` are leaves that are not cell fates (e.g. ``ifnHSC``): they only
+    get reachability, no fixed point and no commitment/universal constraints.
+    """
+    side = {s for s in side_leaves if s in tree and tree.out_degree(s) == 0}
+    terminals = sorted(v for v in tree if tree.out_degree(v) == 0 and v != root and v not in side)
+    term_below = {v: ({v} | nx.descendants(tree, v)) & set(terminals) for v in tree}
+
+    def _size(v: str) -> int:
+        return len(nx.descendants(tree, v))
+
+    # Chain decomposition: the largest child continues the chain, the others start new ones.
+    chains, todo = [], [[root]]
+    while todo:
+        chain = todo.pop(0)
+        while True:
+            kids = sorted(tree.successors(chain[-1]), key=lambda k: (-_size(k), k))
+            if not kids:
+                break
+            todo.extend([chain[-1], k] for k in kids[1:])
+            chain.append(kids[0])
+        if len(chain) > 1:
+            chains.append(chain)
+
+    nonreach, universal = [], []
+    for v in nx.topological_sort(tree):
+        if v in terminals or not term_below[v]:
+            continue
+        parent = next(iter(tree.predecessors(v)), None)
+        if parent is None or term_below[v] != term_below[parent]:
+            universal.append([v, sorted(term_below[v])])
+        nonreach.extend([v, t] for t in terminals if t not in term_below[v])
+
+    return {
+        "root": root,
+        "terminals": terminals,
+        "side_leaves": sorted(side),
+        "edges": [list(e) for e in tree.edges],
+        "chains": chains,
+        "nonreach": nonreach,
+        "universal": universal,
+        "distinct": [[a, b] for i, a in enumerate(terminals) for b in terminals[i + 1:]],
+    }
+
+
+def render_bonesis_lines(spec: dict) -> list[str]:
+    """Human-readable BoNesis code for `spec` (same statements `apply_bonesis_constraints` issues)."""
+    terminals = set(spec["terminals"])
+
+    def ref(s: str) -> str:
+        return f'fixed["{s}"]' if s in terminals else f'~bo.obs("{s}")'
+
+    lines = ["fixed = {}"] if terminals else []
+    lines += [f'fixed["{t}"] = bo.fixed(~bo.obs("{t}"))' for t in spec["terminals"]]
+    lines += [f'fixed["{a}"] != fixed["{b}"]' for a, b in spec["distinct"]]
+    lines += [" >= ".join(ref(s) for s in chain) for chain in spec["chains"]]
+    lines += [f'~bo.obs("{v}") / fixed["{t}"]' for v, t in spec["nonreach"]]
+    lines += [
+        f'~bo.obs("{v}") >> "fixpoints" ^ {{' + ", ".join(f'bo.obs("{t}")' for t in ts) + "}"
+        for v, ts in spec["universal"]
+    ]
+    return lines
+
+
+def apply_bonesis_constraints(bo, spec: dict, *, negative: bool = True) -> None:
+    """Declare `spec` on a `bonesis.BoNesis` object.
+
+    `~bo.obs(s)` always denotes the same configuration (BoNesis names it after the
+    observation), so all statements about a state constrain one shared configuration.
+    `negative=False` skips nonreach/universal constraints — the paper's practice for
+    the (costly) node-selection stage, re-adding them only for model sampling.
+    Distinct fixed points (`!=`) are always declared.
+    """
+    states = {s for chain in spec["chains"] for s in chain} | set(spec["terminals"])
+    missing = sorted(states - set(getattr(bo, "data", states)))
+    if missing:
+        raise KeyError(f"states without observations in bo.data: {missing}")
+
+    fixed = {t: bo.fixed(~bo.obs(t)) for t in spec["terminals"]}
+
+    def ref(s: str):
+        return fixed[s] if s in fixed else ~bo.obs(s)
+
+    for a, b in spec["distinct"]:
+        fixed[a] != fixed[b]
+    for chain in spec["chains"]:
+        for u, v in zip(chain[:-1], chain[1:]):
+            ~bo.obs(u) >= ref(v)
+    if not negative:
+        return
+    for v, t in spec["nonreach"]:
+        ~bo.obs(v) / fixed[t]
+    for v, ts in spec["universal"]:
+        ~bo.obs(v) >> "fixpoints" ^ {bo.obs(t) for t in ts}
+
+
 def derive_bonesis_constraints(
     adata: ad.AnnData,
     observations: pd.Series,
@@ -78,82 +205,42 @@ def derive_bonesis_constraints(
     pt_key: str = "pseudotime",
     label_key: str = "label",
     terminal_states: Optional[Sequence[str]] = None,
+    transient_states: Optional[Sequence[str]] = None,
 ) -> dict:
-    """BoNesis constraints from the states present in `observations`.
+    """BoNesis constraints from the state tree restricted to states in `observations`.
 
-    Topology (which state is the immediate "hub" feeding a given terminal)
-    comes from `utils.trajectory_graph.derive_trajectory_graph` — the real
-    PAGA tree once that module is synced from its other-machine source, a
-    median-pseudotime chain fallback until then (see its docstring) — kept
-    consistent with `plot_state_graph` / `plot_streamlike`, which use the
-    same function.
+    Topology comes from `utils.trajectory_graph.derive_trajectory_graph` (PAGA tree,
+    median-pseudotime chain as fallback) — the same graph `plot_state_graph` /
+    `plot_streamlike` draw. Terminals are the tree's leaves, except leaves listed in
+    `transient_states` (default `uns['transient_states']`), which only get
+    reachability — see `bonesis_spec_from_tree`. `terminal_states` (default
+    `uns['terminal_states']`) only feeds the fallback graph and the
+    `terminals_prior` diagnostic.
     """
-    present = sorted(observations.astype(str).unique())
-    terminals_prior = list(
-        terminal_states if terminal_states is not None else adata.uns.get("terminal_states", [])
-    )
-    terminals = [s for s in terminals_prior if s in present]
-    if not terminals:
-        terminals = [s for s in present if s.startswith("p") and s[1:2].isupper()]
+    present = set(observations.astype(str).unique())
+    terminals_prior = [
+        str(s) for s in (terminal_states if terminal_states is not None else adata.uns.get("terminal_states", []))
+    ]
+    transient_prior = [
+        str(s) for s in (transient_states if transient_states is not None else adata.uns.get("transient_states", []))
+    ]
 
-    root = str(adata.uns.get("root_state"))
     tree, root, edge_source = derive_trajectory_graph(
-        adata, root=root, state_key=label_key, pt_key=pt_key, terminal_states=terminals
+        adata, root=adata.uns.get("root_state"), state_key=label_key, pt_key=pt_key,
+        terminal_states=terminals_prior,
     )
-    sub = tree.subgraph([n for n in tree.nodes if n in present or n == root])
-
-    non_terminal = [s for s in present if s not in terminals]
-    depth = nx.shortest_path_length(sub, root) if root in sub else {}
-    med = (
-        adata.obs.loc[observations.index]
-        .groupby(observations.rename("observation"), observed=True)[pt_key]
-        .median()
-        .astype(float)
-    )
-    # order by real tree depth from root first, median pt only as a tie-break
-    transient_order = sorted(
-        non_terminal,
-        key=lambda s: (depth.get(s, len(present) + 1), float(med.get(s, np.inf))),
-    )
-    hub = transient_order[-1] if transient_order else None
-
-    def _real_hub(terminal: str) -> Optional[str]:
-        """Terminal's actual tree predecessor when it's a known transient/root,
-        else fall back to the global hub (keeps old behaviour for degenerate trees)."""
-        preds = list(sub.predecessors(terminal)) if terminal in sub else []
-        if preds and (preds[0] in transient_order or preds[0] == root):
-            return preds[0]
-        return hub
-
-    bonesis_lines = []
-    edges = []
-
-    if len(transient_order) >= 2:
-        chain = " >= ".join(f'~bo.obs("{s}")' for s in transient_order)
-        bonesis_lines.append(chain)
-        edges.extend(list(zip(transient_order[:-1], transient_order[1:])))
-
-    for t in terminals:
-        src = _real_hub(t)
-        if src is None:
-            continue
-        bonesis_lines.append(f'~bo.obs("{src}") >= bo.fixed(~bo.obs("{t}"))')
-        edges.append([src, t])
-
-    supports_branching = len(terminals) >= 1 and (hub is not None or root in present)
+    tree = _contract_to_present(tree, root, present)
+    spec = bonesis_spec_from_tree(tree, root, side_leaves=transient_prior)
 
     payload = {
         "method": method,
-        "transient_chain": transient_order,
-        "terminals": terminals,
-        "hub": hub,
-        "bonesis_lines": bonesis_lines,
-        "edges": [list(e) for e in edges],
-        "supports_branching": supports_branching,
-        "states_in_csv": present,
+        **spec,
+        "bonesis_lines": render_bonesis_lines(spec),
+        "terminals_prior": terminals_prior,
+        "states_in_csv": sorted(present),
         "edge_source": edge_source,
     }
-    adata.uns["transient_order"] = transient_order
+    adata.uns["transient_order"] = [s for s in nx.topological_sort(tree) if s not in spec["terminals"]]
     adata.uns["trajectory_edges"] = payload["edges"]
     return payload
 
