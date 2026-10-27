@@ -20,7 +20,7 @@ from grn_inference.flowgrn_pkn import (
     threshold_vim_topk,
     write_beeline_inputs,
 )
-from grn_inference.pkn import build_pkn, collectri_signed_edges, measured_genes
+from grn_inference.pkn import build_pkn, collectri_signed_edges, measured_genes, select_genes
 from grn_inference.pkn_io import df_to_bonesis_data, export_pkn_bundle, load_pkn_bundle
 from grn_inference.tf_database import in_db, load_collectri, lookup_sign_from_db
 
@@ -31,6 +31,7 @@ __all__ = [
     "build_pkn",
     "collectri_signed_edges",
     "measured_genes",
+    "select_genes",
     "df_to_bonesis_data",
     "export_pkn_bundle",
     "load_pkn_bundle",

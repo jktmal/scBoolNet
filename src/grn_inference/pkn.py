@@ -34,6 +34,33 @@ def measured_genes(meta: pd.DataFrame, *, min_determined: int = 1) -> pd.Index:
     return meta.columns[meta.notna().sum() >= min_determined]
 
 
+def select_genes(
+    meta: pd.DataFrame,
+    net: pd.DataFrame,
+    *,
+    min_determined: int = 1,
+    extra_genes=(),
+    connect=(),
+) -> pd.Index:
+    """Genes of `meta` for a PKN restricted to them (`build_pkn(meta[genes], ...,
+    include_unmeasured_tfs=False)`): genes with >= `min_determined` determined
+    values plus `extra_genes` (e.g. HVG, markers).
+
+    Genes of `connect` (e.g. markers) without a database edge to the rest of the
+    selection get their direct database neighbours (regulators and targets)
+    present in `meta`, otherwise they would drop out of the PKN. Genes absent
+    from `meta` are left out.
+    """
+    present = set(meta.columns)
+    genes = (set(measured_genes(meta, min_determined=min_determined)) | set(extra_genes)) & present
+    for gene in set(connect) & genes:
+        neighbours = set(net.target[net.source == gene]) | set(net.source[net.target == gene])
+        neighbours.discard(gene)
+        if not neighbours & genes:
+            genes |= neighbours & present
+    return meta.columns[meta.columns.isin(genes)]
+
+
 def collectri_signed_edges(net: pd.DataFrame, *, default_sign_unknown: bool = True) -> pd.DataFrame:
     """One `source, target, sign` row per pair, sign in {1, -1, 0}.
 
