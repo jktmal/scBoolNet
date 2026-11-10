@@ -12,6 +12,7 @@ We started working on this pipeline on **March 2026** and on October we reached 
 Our ideas were already presented during two conferences:
 - ML in PL 2026 at **8th of October** (poster),
 - Young Science Beyond Borders 2026 at **19th of October** (oral presentation).
+
 Poster that was created for the former conference was placed below along with timestamped proof of its presentation during aforementioned day.
 
 ![scBoolNet pipeline](./docs/poster.png)
