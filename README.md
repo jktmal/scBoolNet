@@ -1,3 +1,4 @@
+This research was funded by the National Science Centre, Poland under the OPUS call in the Weave programme, grant no. 2023/51/I/ST6/02864.
 # scBoolNet: An End-to-End scRNA-seq to Boolean Network Inference Pipeline Leveraging FlowGRN Trajectory Reconstruction
 
 ## Abstract
@@ -15,11 +16,7 @@ Our ideas were already presented during two conferences:
 
 Poster that was created for the former conference was placed below along with timestamped proof of its presentation during aforementioned day.
 
+### Poster:
 ![scBoolNet pipeline](./docs/poster.png)
-
+### Attendance Proof:
 ![ML in PL](./docs/poster_contribution.png)
-
-## License
-Copyright (c) 2026 **IDEAS Research Institute**. All rights reserved.
-
-This repository is published solely to document the progress and timeline of this work. No license is granted to use, copy, modify, merge, publish, distribute, sublicense or sell the code, notebooks or any other materials contained in it, in whole or in part, without prior written permission from the rights holders.
