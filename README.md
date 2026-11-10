@@ -20,7 +20,6 @@ Poster that was created for the former conference was placed below along with ti
 ![ML in PL](./docs/poster_contribution.png)
 
 ## License
-Copyright (c) 2026 **IDEAS Research Institute**.  
-All rights reserved.
+Copyright (c) 2026 **IDEAS Research Institute**. All rights reserved.
 
 This repository is published solely to document the progress and timeline of this work. No license is granted to use, copy, modify, merge, publish, distribute, sublicense or sell the code, notebooks or any other materials contained in it, in whole or in part, without prior written permission from the rights holders.
