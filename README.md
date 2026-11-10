@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24113435.svg)](https://doi.org/10.5281/zenodo.24113435)
+
 This research was funded by the National Science Centre, Poland under the OPUS call in the Weave programme, grant no. 2023/51/I/ST6/02864.
 # scBoolNet: An End-to-End scRNA-seq to Boolean Network Inference Pipeline Leveraging FlowGRN Trajectory Reconstruction
 
